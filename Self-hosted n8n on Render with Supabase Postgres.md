@@ -266,3 +266,304 @@ a complete `Dockerfile`, `render.yaml`, and the exact Render environment variabl
 [5]: https://docs.n8n.io/hosting/configuration/configuration-examples/encryption-key/?utm_source=chatgpt.com "Set a custom encryption key"
 [6]: https://render.com/docs/disks?utm_source=chatgpt.com "Persistent Disks"
 [7]: https://docs.n8n.io/hosting/configuration/environment-variables/?utm_source=chatgpt.com "Environment Variables Overview"
+
+Here’s the copy-paste bundle for **n8n on Render free plan + Supabase Postgres + custom tools like FFmpeg**.
+
+This setup is designed so your **workflows, credentials, and settings survive Render restarts/sleep**, because n8n stores them in Postgres and uses a fixed `N8N_ENCRYPTION_KEY`. Render free web services still **sleep after 15 minutes of inactivity**, and their local filesystem is ephemeral, so anything saved only inside the container can still be lost. ([Render][1])
+
+## 1) Folder structure
+
+Create a new GitHub repo like this:
+
+```text
+n8n-render/
+  Dockerfile
+  .dockerignore
+  render.yaml
+```
+
+---
+
+## 2) `Dockerfile`
+
+This starts from the official n8n image and adds FFmpeg plus a few useful tools. Render supports Dockerfile-based deploys for web services. ([Render][2])
+
+```dockerfile
+FROM n8nio/n8n:latest
+
+USER root
+
+RUN apk add --no-cache \
+    ffmpeg \
+    bash \
+    curl \
+    git \
+    jq \
+    python3 \
+    py3-pip \
+    tzdata
+
+USER node
+```
+
+If later you need more tools, add them in the same `apk add` line.
+
+---
+
+## 3) `.dockerignore`
+
+```text
+.git
+.gitignore
+node_modules
+npm-debug.log
+.env
+README.md
+```
+
+---
+
+## 4) `render.yaml`
+
+Use this if you want Render to create the web service from your repo.
+
+```yaml
+services:
+  - type: web
+    name: n8n-render
+    runtime: docker
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /
+    envVars:
+      - key: N8N_HOST
+        value: n8n-render.onrender.com
+      - key: N8N_PORT
+        value: 5678
+      - key: N8N_PROTOCOL
+        value: https
+      - key: WEBHOOK_URL
+        value: https://n8n-render.onrender.com/
+      - key: N8N_EDITOR_BASE_URL
+        value: https://n8n-render.onrender.com/
+      - key: N8N_SECURE_COOKIE
+        value: true
+
+      - key: DB_TYPE
+        value: postgresdb
+      - key: DB_POSTGRESDB_HOST
+        sync: false
+      - key: DB_POSTGRESDB_PORT
+        value: 6543
+      - key: DB_POSTGRESDB_DATABASE
+        value: postgres
+      - key: DB_POSTGRESDB_USER
+        sync: false
+      - key: DB_POSTGRESDB_PASSWORD
+        sync: false
+      - key: DB_POSTGRESDB_SSL_ENABLED
+        value: true
+
+      - key: N8N_ENCRYPTION_KEY
+        sync: false
+
+      - key: GENERIC_TIMEZONE
+        value: Asia/Kolkata
+      - key: TZ
+        value: Asia/Kolkata
+
+      - key: N8N_DIAGNOSTICS_ENABLED
+        value: false
+      - key: N8N_PERSONALIZATION_ENABLED
+        value: false
+      - key: N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS
+        value: false
+
+      - key: N8N_RUNNERS_ENABLED
+        value: true
+
+      - key: N8N_BASIC_AUTH_ACTIVE
+        value: true
+      - key: N8N_BASIC_AUTH_USER
+        sync: false
+      - key: N8N_BASIC_AUTH_PASSWORD
+        sync: false
+```
+
+### What you must edit
+
+Replace:
+
+* `n8n-render.onrender.com` with your real Render domain after first deploy
+* `DB_POSTGRESDB_HOST`
+* `DB_POSTGRESDB_USER`
+* `DB_POSTGRESDB_PASSWORD`
+* `N8N_ENCRYPTION_KEY`
+* basic auth username/password
+
+n8n supports Postgres via environment variables, and `N8N_ENCRYPTION_KEY` is the supported way to keep encrypted credentials readable across restarts and instances. ([n8n Docs][3])
+
+---
+
+## 5) Supabase values to copy
+
+In Supabase, open **Connect** and use the **pooler** connection details. Supabase documents pooled connections and notes that the pooler commonly uses port `6543`; the available connection strings are shown in the Connect panel. ([Supabase][4])
+
+Fill these in Render:
+
+```text
+DB_POSTGRESDB_HOST=aws-0-<region>.pooler.supabase.com
+DB_POSTGRESDB_PORT=6543
+DB_POSTGRESDB_DATABASE=postgres
+DB_POSTGRESDB_USER=postgres.<your-project-ref>
+DB_POSTGRESDB_PASSWORD=<your-supabase-db-password>
+DB_POSTGRESDB_SSL_ENABLED=true
+```
+
+If Supabase shows a different host/user in your Connect screen, use exactly that.
+
+---
+
+## 6) Generate a strong encryption key
+
+Create a long random key and keep it forever.
+
+Example placeholder:
+
+```text
+N8N_ENCRYPTION_KEY=replace-with-a-very-long-random-secret-string
+```
+
+Do **not** change this later unless you know how to rotate n8n encryption keys, because n8n uses it to encrypt stored credentials. ([n8n Docs][5])
+
+---
+
+## 7) Render setup steps
+
+1. Push the three files above to GitHub.
+2. In Render, create a **Web Service** from that repo.
+3. Choose **Docker** runtime. Render supports both Dockerfile builds and prebuilt images for web services. ([Render][2])
+4. Add all env vars from the `render.yaml` or UI.
+5. Deploy.
+6. Open your Render URL.
+7. Complete n8n owner signup.
+
+---
+
+## 8) What survives and what does not
+
+### Safe across restart/sleep
+
+* workflows
+* credentials
+* executions metadata
+* users/settings stored in the n8n database
+
+That’s because n8n supports Postgres as its main database backend. ([n8n Docs][3])
+
+### Not safe on free Render local storage
+
+* local files you save inside the container
+* generated videos/images kept only in the filesystem
+* anything written only to `.n8n` inside the container without external backing
+
+Render free services spin down on idle, and the filesystem is ephemeral unless you use a persistent disk, which is a separate feature not available as part of the free sleeping-service pattern. ([Render][1])
+
+So for files, use:
+
+* Supabase Storage
+* S3 / Cloudflare R2
+* Telegram upload immediately
+* another external storage target
+
+---
+
+## 9) Best env var set for your use case
+
+Here is the full list again in plain copy-paste format for Render’s Environment tab:
+
+```text
+N8N_HOST=n8n-render.onrender.com
+N8N_PORT=5678
+N8N_PROTOCOL=https
+WEBHOOK_URL=https://n8n-render.onrender.com/
+N8N_EDITOR_BASE_URL=https://n8n-render.onrender.com/
+N8N_SECURE_COOKIE=true
+
+DB_TYPE=postgresdb
+DB_POSTGRESDB_HOST=aws-0-REGION.pooler.supabase.com
+DB_POSTGRESDB_PORT=6543
+DB_POSTGRESDB_DATABASE=postgres
+DB_POSTGRESDB_USER=postgres.PROJECTREF
+DB_POSTGRESDB_PASSWORD=YOUR_SUPABASE_DB_PASSWORD
+DB_POSTGRESDB_SSL_ENABLED=true
+
+N8N_ENCRYPTION_KEY=YOUR_LONG_RANDOM_SECRET
+
+GENERIC_TIMEZONE=Asia/Kolkata
+TZ=Asia/Kolkata
+
+N8N_DIAGNOSTICS_ENABLED=false
+N8N_PERSONALIZATION_ENABLED=false
+N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=false
+N8N_RUNNERS_ENABLED=true
+
+N8N_BASIC_AUTH_ACTIVE=true
+N8N_BASIC_AUTH_USER=admin
+N8N_BASIC_AUTH_PASSWORD=CHANGE_THIS_PASSWORD
+```
+
+n8n’s environment variable docs cover deployment, database, and security-related settings. ([n8n Docs][6])
+
+---
+
+## 10) Important free-plan warning
+
+This works for testing and light personal use, but on Render free:
+
+* the service sleeps after 15 minutes idle
+* wake-up takes time
+* it is not a 24/7 production-grade setup without paid infrastructure ([Render][1])
+
+---
+
+## 11) Custom tools later
+
+To add more packages later, just edit the Dockerfile:
+
+```dockerfile
+RUN apk add --no-cache \
+    ffmpeg \
+    imagemagick \
+    bash \
+    curl \
+    git \
+    jq \
+    python3 \
+    py3-pip \
+    tzdata
+```
+
+Then push again and Render will rebuild the image. Docker-based Render deploys support this pattern directly. ([Render][2])
+
+---
+
+## 12) Biggest mistakes to avoid
+
+Do not use:
+
+* SQLite only
+* auto-generated encryption key only
+* local file storage for important data
+* changing `N8N_ENCRYPTION_KEY` after you already saved credentials
+
+Those are the common reasons people lose access to workflows or credentials after redeploys. n8n’s docs explicitly note the role of the custom encryption key. ([n8n Docs][5])
+
+If you want, next I’ll give you a **fully filled Render checklist screen-by-screen**, including exactly what to paste into each Render field.
+
+[1]: https://render.com/docs/free?utm_source=chatgpt.com "Deploy for Free – Render Docs"
+[2]: https://render.com/docs/docker?utm_source=chatgpt.com "Docker on Render"
+[3]: https://docs.n8n.io/hosting/configuration/environment-variables/database/?utm_source=chatgpt.com "Database environment variables"
+[4]: https://supabase.com/docs/guides/database/connecting-to-postgres?utm_source=chatgpt.com "Connect to your database | Supabase Docs"
+[5]: https://docs.n8n.io/hosting/configuration/configuration-examples/encryption-key/?utm_source=chatgpt.com "Set a custom encryption key"
+[6]: https://docs.n8n.io/hosting/configuration/environment-variables/?utm_source=chatgpt.com "Environment Variables Overview"
