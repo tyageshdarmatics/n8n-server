@@ -2,14 +2,15 @@ FROM n8nio/n8n:latest
 
 USER root
 
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y \
     ffmpeg \
     bash \
     curl \
     git \
     jq \
     python3 \
-    py3-pip \
-    tzdata
+    python3-pip \
+    tzdata \
+    && rm -rf /var/lib/apt/lists/*
 
 USER node
