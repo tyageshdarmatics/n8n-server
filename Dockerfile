@@ -1,30 +1,34 @@
-FROM node:20-bookworm-slim
+FROM node:20-alpine
 
-# Install dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+USER root
+
+RUN apk add --no-cache \
+    git \
+    python3 \
+    py3-pip \
+    make \
+    g++ \
+    build-base \
+    cairo-dev \
+    pango-dev \
+    chromium \
+    postgresql-client \
     ffmpeg \
     bash \
     curl \
-    git \
     jq \
-    python3 \
-    python3-pip \
-    tzdata \
-    ca-certificates \
-    tini \
-    && rm -rf /var/lib/apt/lists/*
+    tini
 
-# Install n8n globally
-RUN npm install -g n8n
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
-# Set working dir
+RUN npm install -g n8n@1.123.5
+
+RUN mkdir -p /root/.n8n && chmod -R 777 /root/.n8n
+
 WORKDIR /data
 
-# Expose port
 EXPOSE 5678
 
-# Use tini (important for Render)
 ENTRYPOINT ["tini", "--"]
-
-# Start n8n
-CMD ["n8n"]
+CMD ["n8n", "start"]
