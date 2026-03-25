@@ -1,7 +1,6 @@
 FROM node:20-bookworm-slim
 
-USER root
-
+# Install dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     bash \
@@ -15,14 +14,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tini \
     && rm -rf /var/lib/apt/lists/*
 
+# Install n8n globally
 RUN npm install -g n8n
 
-ENV N8N_PORT=5678
-ENV NODE_ENV=production
+# Set working dir
+WORKDIR /data
 
+# Expose port
 EXPOSE 5678
 
-USER root
+# Use tini (important for Render)
+ENTRYPOINT ["tini", "--"]
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["n8n", "start"]
+# Start n8n
+CMD ["n8n"]
